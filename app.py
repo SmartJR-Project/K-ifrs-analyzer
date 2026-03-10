@@ -1601,4 +1601,4 @@ with tab7:
             "⚠️ <b>면책조항</b>: 본 리포트는 공시 데이터 기반 자동 생성되었으며, 투자 권유가 아닙니다. 투자 결정은 본인의 판단과 책임 하에 이루어져야 합니다.</div>", unsafe_allow_html=True)
     else: st.info("👈 재무제표 조회를 먼저 실행해주세요.")
 
-st.caption("K-IFRS v2.0 | Phase 5 완성 | Hansol CI")
+st.caption("K-IFRS v3.0 | by JR Lee")
