@@ -793,29 +793,31 @@ with tab1:
         with cat1:
             st.markdown(f"### 📈 성장성 ({pl['growth']})")
             for nm in ["매출액 증가율","영업이익 증가율","순이익 증가율","총자산 증가율"]:
-                v=ratios.get(nm); sig,_=get_signal(nm,v); cols=st.columns([3,2,1]); cols[0].markdown(f"**{nm}**"); cols[1].markdown(f"`{fmt_v(v)}`"); cols[2].markdown(sig)
+                v=ratios.get(nm); sig,_=get_signal(nm,v); _c="#2E7D32" if sig=="✅" else "#FF8F00" if sig=="⚠️" else "#E8524A" if sig=="🔴" else "#999"; st.markdown(f"{sig} **{nm}** &nbsp; <span style='font-size:1.6em;font-weight:800;color:{_c}'>{fmt_v(v)}</span>", unsafe_allow_html=True)
         with cat2:
             st.markdown("### 💎 수익성")
             if rc!="11011": st.caption(f"※ {pl['curr']} 누적")
             for nm in ["영업이익률","순이익률","ROE","ROA"]:
-                v=ratios.get(nm); sig,_=get_signal(nm,v); cols=st.columns([3,2,1]); cols[0].markdown(f"**{nm}**"); cols[1].markdown(f"`{fmt_v(v)}`"); cols[2].markdown(sig)
+                v=ratios.get(nm); sig,_=get_signal(nm,v); _c="#2E7D32" if sig=="✅" else "#FF8F00" if sig=="⚠️" else "#E8524A" if sig=="🔴" else "#999"; st.markdown(f"{sig} **{nm}** &nbsp; <span style='font-size:1.6em;font-weight:800;color:{_c}'>{fmt_v(v)}</span>", unsafe_allow_html=True)
         cat3,cat4=st.columns(2)
         with cat3:
             st.markdown("### 🛡️ 안정성")
             for nm in ["부채비율","유동비율","당좌비율","이자보상배율"]:
                 v=ratios.get(nm); sig,_=get_signal(nm,v); sf="배" if nm=="이자보상배율" else "%"
-                cols=st.columns([3,2,1]); cols[0].markdown(f"**{nm}**"); cols[1].markdown(f"`{fmt_v(v,sf)}`"); cols[2].markdown(sig)
+                _c="#2E7D32" if sig=="✅" else "#FF8F00" if sig=="⚠️" else "#E8524A" if sig=="🔴" else "#999"; st.markdown(f"{sig} **{nm}** &nbsp; <span style='font-size:1.6em;font-weight:800;color:{_c}'>{fmt_v(v,sf)}</span>", unsafe_allow_html=True)
         with cat4:
             st.markdown("### 🏷️ 가치평가")
             if ratios.get("PER") is not None or ratios.get("PBR") is not None:
                 if rc!="11011": st.caption("⚠️ 분기/반기 EPS는 누적치")
                 for nm,sf in [("EPS","원"),("BPS","원"),("PER","배"),("PBR","배")]:
-                    v=ratios.get(nm); cols=st.columns([3,2,1]); cols[0].markdown(f"**{nm}**")
+                    v=ratios.get(nm)
                     if v is not None:
-                        cols[1].markdown(f"`{v:,.0f}{sf}`" if sf=="원" else f"`{v:,.2f}{sf}`")
-                        if nm=="PER": cols[2].markdown("✅" if v<15 else ("⚠️" if v<25 else "🔴"))
-                        elif nm=="PBR": cols[2].markdown("✅" if v<1.5 else ("⚠️" if v<3 else "🔴"))
-                    else: cols[1].markdown("`N/A`")
+                        vt = f"{v:,.0f}{sf}" if sf=="원" else f"{v:,.2f}{sf}"
+                        sig2 = ""
+                        if nm=="PER": sig2 = " ✅" if v<15 else (" ⚠️" if v<25 else " 🔴")
+                        elif nm=="PBR": sig2 = " ✅" if v<1.5 else (" ⚠️" if v<3 else " 🔴")
+                        _c2="#2E7D32" if "✅" in sig2 else "#FF8F00" if "⚠️" in sig2 else "#E8524A" if "🔴" in sig2 else "#0055A4"; st.markdown(f"**{nm}** &nbsp; <span style='font-size:1.6em;font-weight:800;color:{_c2}'>{vt}</span>{sig2}", unsafe_allow_html=True)
+                    else: st.markdown(f"**{nm}** &nbsp; <span style='font-size:1.6em;font-weight:800;color:#999'>N/A</span>", unsafe_allow_html=True)
             else: st.info("💡 주가 자동입력 후 **[🚀 조회]**를 다시 눌러주세요.")
         st.markdown("---"); st.markdown("### 📊 종합 시그널")
         good=warn=bad=0
@@ -833,10 +835,10 @@ with tab1:
             else: st.error("📊 **주의**")
         if st.session_state.trend_df is not None and len(st.session_state.trend_df) >= 2:
             st.markdown("---"); st.markdown(f"### 📊 {len(st.session_state.trend_df)}개년 추이 분석")
-            charts = make_trend_charts(st.session_state.trend_df); st.plotly_chart(charts["revenue"], use_container_width=True)
+            charts = make_trend_charts(st.session_state.trend_df); st.plotly_chart(charts["revenue"], use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
             ch1, ch2 = st.columns(2)
-            with ch1: st.plotly_chart(charts["profitability"], use_container_width=True)
-            with ch2: st.plotly_chart(charts["stability"], use_container_width=True)
+            with ch1: st.plotly_chart(charts["profitability"], use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
+            with ch2: st.plotly_chart(charts["stability"], use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
             with st.expander("📋 추이 데이터 상세"):
                 tdf = st.session_state.trend_df.copy()
                 for c in ["매출액","영업이익","당기순이익","자산총계","부채총계","자본총계"]:
@@ -909,7 +911,7 @@ with tab2:
             fig.update_layout(height=600, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 plot_bgcolor="white", paper_bgcolor="#F2F2F2", xaxis_rangeslider_visible=False, font=dict(family="Pretendard, sans-serif"))
             fig.update_xaxes(showgrid=True, gridcolor="#E0E0E0"); fig.update_yaxes(showgrid=True, gridcolor="#E0E0E0")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
             last=ohlcv.iloc[-1]; first=ohlcv.iloc[0]; chg=(last["종가"]-first["종가"])/first["종가"]*100
             mc1,mc2,mc3,mc4,mc5 = st.columns(5)
             mc1.metric("현재가", f"{int(last['종가']):,}원"); mc2.metric(f"{sel_period} 수익률", f"{chg:+.1f}%")
@@ -930,7 +932,7 @@ with tab2:
                     fig_rel.add_hline(y=0, line_dash="solid", line_color="gray", line_width=0.5)
                     fig_rel.update_layout(height=420, plot_bgcolor="white", paper_bgcolor="#F2F2F2", yaxis_title="수익률 (%)", font=dict(family="Pretendard, sans-serif"),
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5), hovermode="x unified")
-                    st.plotly_chart(fig_rel, use_container_width=True)
+                    st.plotly_chart(fig_rel, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
                     stock_ret = stock_norm.loc[common_dates].iloc[-1]; index_ret = index_norm.loc[common_dates].iloc[-1]; rel_ret = stock_ret - index_ret
                     rc1, rc2, rc3 = st.columns(3)
                     rc1.metric(f"📈 {st.session_state.selected_corp['corp_name']}", f"{stock_ret:+.1f}%")
@@ -1064,7 +1066,7 @@ with tab3:
                         height=300,
                         paper_bgcolor="rgba(242, 242, 242, 1.0)"
                     )
-                    st.plotly_chart(fig_gauge, use_container_width=True)
+                    st.plotly_chart(fig_gauge, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
 
                 else:
                     # 조회 실패 시 상세 안내
@@ -1111,7 +1113,7 @@ with tab3:
                         yaxis_title="원",
                         showlegend=False
                     )
-                    st.plotly_chart(fig_per, use_container_width=True)
+                    st.plotly_chart(fig_per, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
 
                     # PER 적정가 요약 테이블
                     per_table = []
@@ -1167,7 +1169,7 @@ with tab3:
                     yaxis_title="원",
                     showlegend=False
                 )
-                st.plotly_chart(fig_pbr, use_container_width=True)
+                st.plotly_chart(fig_pbr, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
 
                 # PBR 적정가 요약 테이블
                 pbr_table = []
@@ -1263,12 +1265,12 @@ with tab4:
                     for name, col, color in [("기관","_기관","#0055A4"),("외국인","_외국인","#E8524A"),("개인(추정)","_개인","#4DA8DA")]:
                         fig_cum.add_trace(go.Scatter(x=df["_date"], y=df[col].cumsum(), name=name, mode="lines", line=dict(color=color, width=2.5)))
                     fig_cum.add_hline(y=0, line_dash="dot", line_color="gray")
-                    fig_cum.update_layout(height=420, plot_bgcolor="white", paper_bgcolor="#F2F2F2", yaxis_title="주 (누적)"); st.plotly_chart(fig_cum, use_container_width=True)
+                    fig_cum.update_layout(height=420, plot_bgcolor="white", paper_bgcolor="#F2F2F2", yaxis_title="주 (누적)"); st.plotly_chart(fig_cum, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
                     st.markdown("#### 📊 일별 순매수 (최근 30일)"); recent = df.tail(30); fig_d = go.Figure()
                     for name, col, color in [("기관","_기관","#0055A4"),("외국인","_외국인","#E8524A")]:
                         fig_d.add_trace(go.Bar(x=recent["_date"], y=recent[col], name=name, marker_color=color, opacity=0.7))
                     fig_d.add_hline(y=0, line_color="gray"); fig_d.update_layout(barmode="group", height=350, plot_bgcolor="white", paper_bgcolor="#F2F2F2", yaxis_title="주")
-                    st.plotly_chart(fig_d, use_container_width=True)
+                    st.plotly_chart(fig_d, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
                     mc1,mc2,mc3 = st.columns(3)
                     for w,n,c in [(mc1,"기관","_기관"),(mc2,"외국인","_외국인"),(mc3,"개인(추정)","_개인")]: t=df[c].sum(); w.metric(n, f"{t:+,}주", "순매수" if t>0 else "순매도")
                     if "보유율" in col_map:
@@ -1279,7 +1281,7 @@ with tab4:
                         if len(dr) > 0:
                             st.markdown("#### 📊 외국인 보유율 추이")
                             fig_r = go.Figure(go.Scatter(x=dr["_date"],y=dr["_보유율"],mode="lines+markers",line=dict(color="#E8524A",width=2),marker=dict(size=4)))
-                            fig_r.update_layout(height=300,plot_bgcolor="white",paper_bgcolor="#F2F2F2",yaxis_title="%"); st.plotly_chart(fig_r, use_container_width=True)
+                            fig_r.update_layout(height=300,plot_bgcolor="white",paper_bgcolor="#F2F2F2",yaxis_title="%"); st.plotly_chart(fig_r, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
                     with st.expander("📋 상세 데이터"):
                         show=df[["_date","_기관","_외국인","_개인"]].copy(); show.columns=["날짜","기관","외국인","개인(추정)"]; show["날짜"]=show["날짜"].dt.strftime("%Y-%m-%d")
                         st.dataframe(show.tail(40),use_container_width=True,hide_index=True)
@@ -1366,12 +1368,12 @@ with tab5:
                 vals = pdf[metric].tolist() if metric in pdf.columns else [None]*len(names)
                 fig_comp.add_trace(go.Bar(x=names, y=[v if pd.notna(v) else 0 for v in vals], marker_color=[colors[j%len(colors)] for j in range(len(names))],
                     showlegend=False, text=[f"{v:.1f}" if pd.notna(v) else "N/A" for v in vals], textposition="outside"), row=1, col=i+1)
-            fig_comp.update_layout(height=400, plot_bgcolor="white", paper_bgcolor="#F2F2F2"); st.plotly_chart(fig_comp, use_container_width=True)
+            fig_comp.update_layout(height=400, plot_bgcolor="white", paper_bgcolor="#F2F2F2"); st.plotly_chart(fig_comp, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
             st.markdown("#### 🎯 종합 레이더"); categories = ["영업이익률","순이익률","ROE","ROA"]; fig_r = go.Figure()
             for idx, (_, row) in enumerate(pdf.iterrows()):
                 vr = [row.get(c, 0) if pd.notna(row.get(c)) and row.get(c, 0) > -50 else 0 for c in categories]; vr.append(vr[0])
                 fig_r.add_trace(go.Scatterpolar(r=vr, theta=categories+[categories[0]], fill="toself", name=row["종목"], line_color=colors[idx%len(colors)], opacity=0.6))
-            fig_r.update_layout(polar=dict(radialaxis=dict(visible=True)), height=450, paper_bgcolor="#F2F2F2"); st.plotly_chart(fig_r, use_container_width=True)
+            fig_r.update_layout(polar=dict(radialaxis=dict(visible=True)), height=450, paper_bgcolor="#F2F2F2"); st.plotly_chart(fig_r, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
     else: st.info("👈 재무제표 조회를 먼저 실행해주세요.")
 
 with tab6:
@@ -1400,14 +1402,14 @@ with tab6:
                     show_c = [c for c in ["rcept_dt","report_nm","flr_nm","rcept_no"] if c in disc_f.columns]
                     disp = disc_f[show_c].copy().rename(columns={"rcept_dt":"접수일","report_nm":"공시명","flr_nm":"제출인","rcept_no":"접수번호"})
                     if "접수번호" in disp.columns: disp["DART링크"] = disp["접수번호"].apply(lambda x: f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={x}"); disp = disp.drop(columns=["접수번호"])
-                    st.dataframe(disp.head(50), use_container_width=True, hide_index=True)
+                    st.dataframe(disp.head(50), use_container_width=True, hide_index=True, column_config={"DART링크": st.column_config.LinkColumn("DART링크", display_text="📄 공시보기")})
                     if "rcept_dt" in disc.columns:
                         dm = disc.copy(); dm["월"] = pd.to_datetime(dm["rcept_dt"], errors="coerce").dt.to_period("M").astype(str)
                         mc = dm.groupby("월").size().reset_index(name="건수")
                         if len(mc) > 1:
                             st.markdown("#### 📊 월별 공시 건수")
                             fig_d = go.Figure(go.Bar(x=mc["월"],y=mc["건수"],marker_color="#0055A4",text=mc["건수"],textposition="outside"))
-                            fig_d.update_layout(height=300,plot_bgcolor="white",paper_bgcolor="#F2F2F2"); st.plotly_chart(fig_d, use_container_width=True)
+                            fig_d.update_layout(height=300,plot_bgcolor="white",paper_bgcolor="#F2F2F2"); st.plotly_chart(fig_d, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
             else: st.info("공시 없음")
         with t6_2:
             st.markdown("#### 📰 관련 뉴스"); ticker = corp["stock_code"]; corp_name = corp["corp_name"]; import urllib.parse
@@ -1527,7 +1529,9 @@ with tab7:
             st.markdown(f"<div style='padding:15px;border-radius:10px;background:{color}22;border-left:5px solid {color};'><h4 style='margin:0;'>종합 판정: {verdict}</h4>"
                 f"<p>긍정 {len(bull)} / 부정 {len(bear)} / 중립 {len(neutral)} → 점수: {score:+d}</p></div>", unsafe_allow_html=True)
             with st.expander("📋 시그널 상세"):
-                for emoji, label, desc in signals: st.markdown(f"{emoji} **{label}**: {desc}")
+                for emoji, label, desc in signals:
+                    _sc = "#2E7D32" if emoji=="🟢" else "#FF8F00" if emoji=="🟡" else "#E8524A" if emoji=="🔴" else "#999"
+                    st.markdown(f"{emoji} **{label}**: <span style='font-size:1.4em;font-weight:800;color:{_sc}'>{desc}</span>", unsafe_allow_html=True)
             st.markdown("---"); st.markdown("### 🎯 적정가 분석")
             if price and shares and shares>0:
                 eps=ni/shares if ni else None; bps=te/shares if te else None; raw_targets=[]; targets=[]
@@ -1571,7 +1575,9 @@ with tab7:
             if per and per<10: opinions.append("✅ PER 저평가 (<10배)")
             elif per and per<20: opinions.append("🟡 PER 적정 (10~20배)")
             elif per: opinions.append("⚠️ PER 고평가 (>20배)")
-            for op in opinions: st.markdown(f"- {op}")
+            for op in opinions:
+                _oc = "#2E7D32" if "✅" in op else "#FF8F00" if "🟡" in op else "#E8524A" if "⚠️" in op else "#999"
+                st.markdown(f"<div style='font-size:1.2em;font-weight:700;color:{_oc};padding:4px 0'>• {op}</div>", unsafe_allow_html=True)
             st.markdown("---"); st.markdown("### 🤖 AI 분석 코멘트")
             oai_key = st.session_state.get("openai_key", "")
             if oai_key:
