@@ -152,6 +152,44 @@ def analyze_debt_asset_structure(df):
     r["ncfin_curr"]=gv(["비유동금융자산","장기금융상품","기타비유동금융자산"],"thstrm_amount");r["ncfin_prev"]=gv(["비유동금융자산","장기금융상품","기타비유동금융자산"],"frmtrm_amount")
     return r
 
+
+def analyze_debt_asset_structure(df):
+    if df is None or len(df)==0: return None
+    work=df.copy()
+    if "fs_div" in work.columns:
+        cfs=work[work["fs_div"]=="CFS"]
+        if len(cfs)>0: work=cfs
+    if "account_nm" not in work.columns: return None
+    work["_acc"]=work["account_nm"].astype(str).str.strip()
+    def gv(names,col="thstrm_amount"):
+        for nm in names:
+            m=work[work["_acc"]==nm]
+            if len(m)==0: m=work[work["_acc"].str.contains(nm,na=False,regex=False)]
+            if len(m)>0:
+                try: return float(str(m.iloc[0][col]).replace(",","").strip())
+                except: pass
+        return None
+    r={}
+    fi={"단기차입금":["단기차입금"],"유동성장기부채":["유동성장기부채","유동성장기차입금"],"단기사채":["단기사채"],"장기차입금":["장기차입금"],"사채":["사채"]}
+    fc=0;fp=0;fd=[]
+    for lb,nms in fi.items():
+        vc=gv(nms,"thstrm_amount");vp=gv(nms,"frmtrm_amount")
+        if vc is not None: fc+=vc;fd.append({"item":lb,"curr":vc,"prev":vp or 0})
+        if vp is not None: fp+=vp
+    r["fin_curr"]=fc;r["fin_prev"]=fp;r["fin_detail"]=fd
+    r["debt_curr"]=gv(["부채총계"],"thstrm_amount");r["debt_prev"]=gv(["부채총계"],"frmtrm_amount")
+    if r["debt_curr"] is not None: r["nfin_curr"]=r["debt_curr"]-fc
+    if r["debt_prev"] is not None: r["nfin_prev"]=r["debt_prev"]-fp
+    r["asset_curr"]=gv(["자산총계"],"thstrm_amount");r["asset_prev"]=gv(["자산총계"],"frmtrm_amount")
+    r["cash_curr"]=gv(["현금및현금성자산","현금및현금등가물"],"thstrm_amount");r["cash_prev"]=gv(["현금및현금성자산","현금및현금등가물"],"frmtrm_amount")
+    r["inv_curr"]=gv(["재고자산"],"thstrm_amount");r["inv_prev"]=gv(["재고자산"],"frmtrm_amount")
+    r["ca_curr"]=gv(["유동자산"],"thstrm_amount");r["ca_prev"]=gv(["유동자산"],"frmtrm_amount")
+    r["recv_curr"]=gv(["매출채권","매출채권및기타유동채권","매출채권 및 기타채권"],"thstrm_amount");r["recv_prev"]=gv(["매출채권","매출채권및기타유동채권","매출채권 및 기타채권"],"frmtrm_amount")
+    r["nca_curr"]=gv(["비유동자산"],"thstrm_amount");r["nca_prev"]=gv(["비유동자산"],"frmtrm_amount")
+    r["ppe_curr"]=gv(["유형자산"],"thstrm_amount");r["ppe_prev"]=gv(["유형자산"],"frmtrm_amount")
+    r["ncfin_curr"]=gv(["비유동금융자산","장기금융상품","기타비유동금융자산"],"thstrm_amount");r["ncfin_prev"]=gv(["비유동금융자산","장기금융상품","기타비유동금융자산"],"frmtrm_amount")
+    return r
+
 def extract_accounts(df, report_code="11011"):
     result={"당기":{},"전기":{},"전전기":{},"matched":{},"period_label":PERIOD_LABELS.get(report_code,PERIOD_LABELS["11011"])}
     if "fs_div" in df.columns:
@@ -440,7 +478,7 @@ for k in ["dart","corp_list","selected_corp","financial_data","api_connected",
            "price_date","price_errors","multiyear","trend_df"]:
     if k not in st.session_state: st.session_state[k]=None
 if "watchlist" not in st.session_state: st.session_state.watchlist=[]
-if "openai_key" not in st.session_state: st.session_state.openai_key=""
+if "openai_key" not in st.session_state: st.session_state.openai_key="AIzaSyAgKbE5OO1Cs9gQFKnoOvu9wceKL_VmuvE"
 
 def connect_dart(api_key):
     try:
@@ -714,6 +752,8 @@ with st.sidebar:
                     with st.expander("에러"): st.code(err)
     else: st.info("👆 API 키 입력")
     with st.expander("🤖 AI 분석 (선택)"):
+        if "openai_key" not in st.session_state: st.session_state.openai_key = "AIzaSyAgKbE5OO1Cs9gQFKnoOvu9wceKL_VmuvE"
+        if "oai_input" not in st.session_state: st.session_state.oai_input = st.session_state.get("openai_key", "")
         oai_key = st.text_input("Gemini API 키", type="password", placeholder="AIza...", key="oai_input")
         if oai_key: st.session_state.openai_key = oai_key.strip(); st.success("✅ Gemini AI 활성화")
         else: st.caption("입력 시 종합리포트에 AI 코멘트 추가")
@@ -904,6 +944,53 @@ with tab1:
                             st.dataframe(pd.DataFrame(_arows),use_container_width=True,hide_index=True)
                         else:
                             st.info("자산 상세 데이터 없음")
+        if st.session_state.financial_data is not None:
+            _str=analyze_debt_asset_structure(st.session_state.financial_data)
+            if _str and _str.get("debt_curr"):
+                st.markdown("---")
+                st.markdown("### 🏗️ 자산/부채 구조 분석")
+                _s1,_s2=st.columns(2)
+                with _s1:
+                    st.markdown("#### 💳 부채 구조")
+                    dt=_str["debt_curr"];dp=_str.get("debt_prev")
+                    fc=_str.get("fin_curr",0);fp=_str.get("fin_prev",0)
+                    nfc=_str.get("nfin_curr");nfp=_str.get("nfin_prev")
+                    st.markdown(f"**부채총계** &nbsp; <span style='font-size:1.6em;font-weight:800'>{fmt_amt(dt)}</span>",unsafe_allow_html=True)
+                    fr=fc/dt*100 if dt else 0
+                    fc_chg=((fc-fp)/fp*100) if fp else None
+                    _fcc="#E8524A" if fc_chg and fc_chg>5 else "#2E7D32" if fc_chg and fc_chg<-5 else "#FF8F00" if fc_chg else "#999"
+                    st.markdown(f"**금융부채** &nbsp; <span style='font-size:1.6em;font-weight:800;color:{_fcc}'>{fmt_amt(fc)}</span> &nbsp; (비중 {fr:.1f}%)"+(f" &nbsp; <span style='color:{_fcc}'>{fc_chg:+.1f}%</span>" if fc_chg is not None else ""),unsafe_allow_html=True)
+                    if nfc is not None:
+                        nfr=nfc/dt*100 if dt else 0
+                        nfc_chg=((nfc-nfp)/nfp*100) if nfp else None
+                        _ncc="#E8524A" if nfc_chg and nfc_chg>5 else "#2E7D32" if nfc_chg and nfc_chg<-5 else "#FF8F00" if nfc_chg else "#999"
+                        st.markdown(f"**비금융부채** &nbsp; <span style='font-size:1.6em;font-weight:800;color:{_ncc}'>{fmt_amt(nfc)}</span> &nbsp; (비중 {nfr:.1f}%)"+(f" &nbsp; <span style='color:{_ncc}'>{nfc_chg:+.1f}%</span>" if nfc_chg is not None else ""),unsafe_allow_html=True)
+                    if _str["fin_detail"]:
+                        with st.expander("📋 금융부채 상세"):
+                            for _fd in _str["fin_detail"]:
+                                _fdchg=(((_fd["curr"]-_fd["prev"])/_fd["prev"])*100) if _fd["prev"] else None
+                                _fdc="#E8524A" if _fdchg and _fdchg>0 else "#2E7D32" if _fdchg and _fdchg<0 else "#999"
+                                st.markdown(f"• **{_fd['item']}** &nbsp; <span style='font-weight:700;color:{_fdc}'>{fmt_amt(_fd['curr'])}</span>"+(f" &nbsp; ({_fdchg:+.1f}%)" if _fdchg is not None else ""),unsafe_allow_html=True)
+                with _s2:
+                    st.markdown("#### 🏦 자산 구성")
+                    at=_str.get("asset_curr");ap=_str.get("asset_prev")
+                    cc=_str.get("cash_curr");cp=_str.get("cash_prev")
+                    ic=_str.get("inv_curr");ip=_str.get("inv_prev")
+                    if at:
+                        st.markdown(f"**자산총계** &nbsp; <span style='font-size:1.6em;font-weight:800'>{fmt_amt(at)}</span>",unsafe_allow_html=True)
+                        if cc is not None:
+                            cr=cc/at*100;crp=(cp/ap*100) if cp and ap else None
+                            _ccc="#2E7D32" if crp and cr>crp else "#E8524A" if crp and cr<crp else "#0055A4"
+                            st.markdown(f"**현금성자산** &nbsp; <span style='font-size:1.6em;font-weight:800;color:{_ccc}'>{fmt_amt(cc)}</span> &nbsp; (비중 <b>{cr:.1f}%</b>)"+(f" &nbsp; 전기 {crp:.1f}%" if crp else ""),unsafe_allow_html=True)
+                        if ic is not None:
+                            ir=ic/at*100;irp=(ip/ap*100) if ip and ap else None
+                            _icc="#E8524A" if irp and ir>irp+2 else "#2E7D32" if irp and ir<irp-2 else "#0055A4"
+                            st.markdown(f"**재고자산** &nbsp; <span style='font-size:1.6em;font-weight:800;color:{_icc}'>{fmt_amt(ic)}</span> &nbsp; (비중 <b>{ir:.1f}%</b>)"+(f" &nbsp; 전기 {irp:.1f}%" if irp else ""),unsafe_allow_html=True)
+                        if cc is not None or ic is not None:
+                            tot=(cc or 0)+(ic or 0);tr=tot/at*100
+                            tp=((cp or 0)+(ip or 0));trp=(tp/ap*100) if ap else None
+                            _tcc="#0055A4"
+                            st.markdown(f"**현금+재고** &nbsp; <span style='font-size:1.6em;font-weight:800;color:{_tcc}'>{fmt_amt(tot)}</span> &nbsp; (비중 <b>{tr:.1f}%</b>)"+(f" &nbsp; 전기 {trp:.1f}%" if trp else ""),unsafe_allow_html=True)
         st.markdown("---"); st.markdown("### 📊 종합 시그널")
         good=warn=bad=0
         for nm in SIGNAL_RULES:
