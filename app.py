@@ -83,6 +83,8 @@ ACCOUNT_MAP = {
     "자산총계":["자산총계"],"부채총계":["부채총계"],"자본총계":["자본총계"],
     "유동자산":["유동자산"],"유동부채":["유동부채"],"비유동부채":["비유동부채"],
     "재고자산":["재고자산"],"현금성자산":["현금및현금성자산","현금 및 현금성자산","현금및현금성자산 등"],
+    "매출채권":["매출채권","매출채권및기타유동채권","매출채권 및 기타유동채권","매출채권 및 기타채권","외상매출금","수취채권"],
+    "매입채무":["매입채무","매입채무및기타유동채무","매입채무 및 기타유동채무","매입채무 및 기타채무","외상매입금","지급채무"],
 }
 PERIOD_LABELS = {
     "11011":{"curr":"당기 (연간)","prev":"전기 (전년)","growth":"전년 대비"},
@@ -273,6 +275,8 @@ def fetch_sector_peers(ticker):
         url = f"https://finance.naver.com/item/main.naver?code={ticker}"
         resp = requests.get(url, headers=headers, timeout=5)
         if resp.status_code != 200: return sector_name, peers
+
+
         soup = BeautifulSoup(resp.text, "html.parser")
         upjong_link = None
         for a in soup.select("a[href*='upjong']"):
@@ -297,6 +301,99 @@ def fetch_sector_peers(ticker):
                         if len(peers) >= 10: break
     except: pass
     return sector_name, peers
+
+# -- 적정주가 3-Way 산출 --
+def get_naver_valuation_data(ticker):
+    result = {"per": None, "dps": None, "div_yield": None}
+    hd = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    try:
+        from bs4 import BeautifulSoup
+        url = f"https://finance.naver.com/item/main.naver?code={ticker}"
+        r = requests.get(url, headers=hd, timeout=5)
+        if r.status_code != 200: return result
+        soup = BeautifulSoup(r.text, "html.parser")
+        for em in soup.select("em#_per"):
+            try: result["per"] = float(em.get_text(strip=True).replace(",","")); break
+            except: pass
+        if not result["per"]:
+            m = re.search(r'PER.*?(\d+\.?\d*)\s*배', r.text, re.DOTALL)
+            if m:
+                try: result["per"] = float(m.group(1))
+                except: pass
+        tables = soup.select("table")
+        for tbl in tables:
+            txt = tbl.get_text()
+            if "주당배당금" in txt or "배당수익률" in txt:
+                for row in tbl.select("tr"):
+                    row_txt = " ".join(c.get_text(strip=True) for c in row.select("td, th"))
+                    if "주당배당금" in row_txt:
+                        nums = re.findall(r'[\d,]+', row_txt.split("주당배당금")[-1])
+                        if nums:
+                            v = nums[0].replace(",","")
+                            if v.isdigit() and int(v) > 0: result["dps"] = int(v)
+                    if "배당수익률" in row_txt:
+                        nums = re.findall(r'\d+\.?\d*', row_txt.split("배당수익률")[-1])
+                        if nums:
+                            try: result["div_yield"] = float(nums[0])
+                            except: pass
+        if not result["dps"] and result["div_yield"]:
+            try:
+                m2 = re.search(r'현재가.*?(\d[\d,]*)', r.text, re.DOTALL)
+                if m2: result["dps"] = int(int(m2.group(1).replace(",","")) * result["div_yield"] / 100)
+            except: pass
+    except: pass
+    return result
+
+def get_peers_per_list(auto_peers, max_peers=8):
+    per_list = []
+    hd = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    if not auto_peers: return per_list
+    import time as _t
+    for code in list(auto_peers.keys())[:max_peers]:
+        try:
+            url = f"https://finance.naver.com/item/main.naver?code={code}"
+            r = requests.get(url, headers=hd, timeout=5)
+            if r.status_code == 200:
+                m = re.search(r'id="_per"[^>]*>([\d.]+)', r.text)
+                if not m: m = re.search(r'PER.*?(\d+\.?\d*)\s*배', r.text, re.DOTALL)
+                if m:
+                    v = float(m.group(1))
+                    if 0 < v < 200: per_list.append({"code": code, "name": auto_peers.get(code, code), "PER": v})
+            _t.sleep(0.15)
+        except: pass
+    return per_list
+
+def calc_three_valuations(ticker, eps, bps, ni_curr, ni_prev, price, shares, auto_peers=None):
+    results = {}
+    try:
+        end_dt = datetime.now(); start_dt = end_dt - timedelta(days=365*5)
+        ohlcv = pykrx_stock.get_market_ohlcv_by_date(start_dt.strftime("%Y%m%d"), end_dt.strftime("%Y%m%d"), ticker, "m")
+        if ohlcv is not None and len(ohlcv) > 10 and bps and bps > 0:
+            pbr_s = ohlcv["종가"] / bps; pbr_s = pbr_s[pbr_s > 0]
+            if len(pbr_s) > 5:
+                q25=pbr_s.quantile(0.25); q50=pbr_s.quantile(0.50); q75=pbr_s.quantile(0.75)
+                results["pbr_band"] = {"target": int(bps*q25), "bps": bps, "q25": round(q25,2), "q50": round(q50,2), "q75": round(q75,2), "desc": f"BPS {bps:,.0f}원 x 하단PBR {q25:.2f}배"}
+    except: pass
+    try:
+        if eps and eps > 0 and auto_peers:
+            peer_pers = get_peers_per_list(auto_peers)
+            if peer_pers:
+                vals = [p["PER"] for p in peer_pers]
+                avg_p = sum(vals)/len(vals); med_p = sorted(vals)[len(vals)//2]
+                results["industry_per"] = {"target": int(eps*med_p), "eps": eps, "avg_per": round(avg_p,1), "med_per": round(med_p,1), "peers": peer_pers, "desc": f"EPS {eps:,.0f}원 x 업종PER {med_p:.1f}배"}
+    except: pass
+    try:
+        nv = get_naver_valuation_data(ticker)
+        dps = nv.get("dps")
+        if dps and dps > 0:
+            g = max(0.01, min(0.12, (ni_curr-ni_prev)/abs(ni_prev))) if ni_curr and ni_prev and ni_prev > 0 else 0.03
+            r = 0.085
+            if g < r - 0.005:
+                results["ddm"] = {"target": int(dps*(1+g)/(r-g)), "dps": dps, "growth_pct": round(g*100,1), "req_return_pct": round(r*100,1), "div_yield": nv.get("div_yield"), "desc": f"DPS {dps:,}원 x (1+{g*100:.1f}%) / ({r*100:.1f}%-{g*100:.1f}%)"}
+    except: pass
+    return results
+# -- 적정주가 3-Way 끝 --
+
 
 def generate_ai_comment(corp_name, financial_summary, gemini_key):
     """Google Gemini API로 AI 투자 코멘트 생성"""
@@ -367,7 +464,7 @@ def fetch_multiyear(dart, corp_code, base_year, report_code, years=5):
                     try:
                         if str(df[col].dtype) == "string": df[col] = df[col].astype(object)
                     except: pass
-                vals, _ = extract_from_df(df)
+                vals, prev_vals = extract_from_df(df)
                 if vals: all_data[yr] = vals
         except: continue
     return all_data
@@ -447,6 +544,29 @@ def calculate_all_ratios(accounts, stock_price=0, shares=0):
         r["EPS"]=ni/shares if ni else None; r["BPS"]=eq/shares if eq else None
         r["PER"]=stock_price/r["EPS"] if r.get("EPS") and r["EPS"]>0 else None
         r["PBR"]=stock_price/r["BPS"] if r.get("BPS") and r["BPS"]>0 else None
+        # ── CCC (현금전환주기) ──────────────────────────────────
+    cogs    = curr.get("매출원가")
+    ar_c    = curr.get("매출채권");  ar_p = prev.get("매출채권")
+    inv_c   = curr.get("재고자산");  inv_p = prev.get("재고자산")
+    ap_c    = curr.get("매입채무");  ap_p = prev.get("매입채무")
+    rev_ccc = curr.get("매출액")
+
+    def _avg(a, b):
+        if a is not None and b is not None: return (a + b) / 2
+        return a  # 전기 없으면 당기만 사용
+
+    avg_inv = _avg(inv_c, inv_p)
+    avg_ar  = _avg(ar_c,  ar_p)
+    avg_ap  = _avg(ap_c,  ap_p)
+
+    DIO = (avg_inv / cogs    * 365) if (avg_inv is not None and cogs    not in (None,0)) else None
+    DSO = (avg_ar  / rev_ccc * 365) if (avg_ar  is not None and rev_ccc not in (None,0)) else None
+    DPO = (avg_ap  / cogs    * 365) if (avg_ap  is not None and cogs    not in (None,0)) else None
+
+    r["DIO"] = round(DIO, 1) if DIO is not None else None
+    r["DSO"] = round(DSO, 1) if DSO is not None else None
+    r["DPO"] = round(DPO, 1) if DPO is not None else None
+    r["CCC"] = round(DIO + DSO - DPO, 1) if (DIO is not None and DSO is not None and DPO is not None) else None
     return r
 
 SIGNAL_RULES={"매출액 증가율":{"good":(10,None),"warn":(0,10),"bad":(None,0)},
@@ -897,6 +1017,47 @@ with tab1:
                         _c2="#2E7D32" if "✅" in sig2 else "#FF8F00" if "⚠️" in sig2 else "#E8524A" if "🔴" in sig2 else "#0055A4"; st.markdown(f"**{nm}** &nbsp; <span style='font-size:1.6em;font-weight:800;color:{_c2}'>{vt}</span>{sig2}", unsafe_allow_html=True)
                     else: st.markdown(f"**{nm}** &nbsp; <span style='font-size:1.6em;font-weight:800;color:#999'>N/A</span>", unsafe_allow_html=True)
             else: st.info("💡 주가 자동입력 후 **[🚀 조회]**를 다시 눌러주세요.")
+        st.markdown("---")
+        st.markdown("### 🔄 운전자본 효율성 (CCC)")
+
+        DIO_v = ratios.get("DIO"); DSO_v = ratios.get("DSO")
+        DPO_v = ratios.get("DPO"); CCC_v = ratios.get("CCC")
+
+        c1,c2,c3,c4 = st.columns(4)
+        def _day_metric(col,label,val,help_txt):
+            col.metric(label, f"{val:,.1f}일" if val is not None else "N/A", help=help_txt)
+        _day_metric(c1,"📦 DIO (재고회전일수)",  DIO_v, "평균 재고자산 / 매출원가 × 365\n낮을수록 재고 효율 ↑")
+        _day_metric(c2,"📬 DSO (매출채권회전일수)",DSO_v,"평균 매출채권 / 매출액 × 365\n낮을수록 현금회수 빠름")
+        _day_metric(c3,"🧾 DPO (매입채무회전일수)",DPO_v,"평균 매입채무 / 매출원가 × 365\n높을수록 지급유예 유리")
+        _day_metric(c4,"💵 CCC (현금전환주기)",   CCC_v, "DIO + DSO − DPO\n음수면 현금을 미리 받는 구조")
+
+        if CCC_v is not None:
+            if   CCC_v <   0: sig=("🟢 음수 CCC",  "#1a7a4a","현금을 미리 받고 나중에 지급 — 매우 우수")
+            elif CCC_v <=  30: sig=("🟢 매우 짧음","#1a7a4a","현금 순환 속도 우수")
+            elif CCC_v <=  60: sig=("🟡 양호",      "#b8860b","업종 평균 수준")
+            elif CCC_v <= 120: sig=("🟠 주의",      "#c05000","운전자본 부담 증가 가능")
+            else:              sig=("🔴 위험",      "#a00000","현금 묶임 심각 — 세부 점검 필요")
+            lb,cl,desc=sig
+            st.markdown(
+                f"<div style='background:{cl}18;border-left:4px solid {cl};border-radius:6px;"
+                f"padding:10px 16px;margin-top:8px'>"
+                f"<span style='color:{cl};font-weight:700;font-size:1.05em'>{lb}</span>"
+                f"&nbsp;&nbsp;<span style='color:#444'>{desc}</span>"
+                f"&nbsp;&nbsp;<span style='color:{cl};font-weight:700'>CCC = {CCC_v:+.1f}일</span></div>",
+                unsafe_allow_html=True)
+
+        if any(v is not None for v in [DIO_v,DSO_v,DPO_v]):
+            import plotly.graph_objects as go
+            fig_ccc=go.Figure()
+            for nm,val,clr in [("📦 DIO",DIO_v,"#4C9BE8"),("📬 DSO",DSO_v,"#F4A261"),("🧾 DPO",DPO_v,"#2EC4B6")]:
+                if val is not None:
+                    fig_ccc.add_trace(go.Bar(name=nm,x=[val],y=["구성요소"],orientation="h",
+                        marker_color=clr,text=f"{val:.1f}일",textposition="inside",width=0.4))
+            fig_ccc.update_layout(barmode="stack",height=120,
+                margin=dict(l=10,r=10,t=10,b=10),legend=dict(orientation="h",y=-0.4),
+                xaxis_title="일수",plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_ccc,use_container_width=True)
+            st.caption("💡 DIO(재고)+DSO(채권) = 자금 묶임 | DPO(채무) = 지급유예 | CCC = 순 현금 묶임 기간")
         if st.session_state.financial_data is not None:
             _str=analyze_debt_asset_structure(st.session_state.financial_data)
             if _str and _str.get("debt_curr"):
@@ -1455,6 +1616,7 @@ with tab4:
                             fig_r = go.Figure(go.Scatter(x=dr["_date"],y=dr["_보유율"],mode="lines+markers",line=dict(color="#E8524A",width=2),marker=dict(size=4)))
                             fig_r.update_layout(height=300,plot_bgcolor="white",paper_bgcolor="#F2F2F2",yaxis_title="%"); st.plotly_chart(fig_r, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
                     with st.expander("📋 상세 데이터"):
+
                         show=df[["_date","_기관","_외국인","_개인"]].copy(); show.columns=["날짜","기관","외국인","개인(추정)"]; show["날짜"]=show["날짜"].dt.strftime("%Y-%m-%d")
                         st.dataframe(show.tail(40),use_container_width=True,hide_index=True)
             else: st.warning("컬럼 매핑 실패")
@@ -1509,6 +1671,7 @@ with tab5:
                                     if str(df[col].dtype) == "string": df[col] = df[col].astype(object)
                                 except: pass
                             vals, _ = extract_from_df(df); p, s, _, _ = fetch_stock_info(tk)
+                            prev_vals = {} 
                             rev=vals.get("매출액"); oi=vals.get("영업이익"); ni=vals.get("당기순이익"); ta=vals.get("자산총계"); tl=vals.get("부채총계"); te=vals.get("자본총계")
                             row = {"종목": cn, "코드": tk, "매출액": rev, "영업이익": oi, "당기순이익": ni}
                             row["영업이익률"] = round(oi/rev*100, 1) if rev and oi and rev!=0 else None
@@ -1516,6 +1679,17 @@ with tab5:
                             row["ROE"] = round(ni/te*100, 1) if ni and te and te!=0 else None
                             row["ROA"] = round(ni/ta*100, 1) if ni and ta and ta!=0 else None
                             row["부채비율"] = round(tl/te*100, 1) if tl and te and te!=0 else None
+                            cogs_v=vals.get("매출원가"); rev_v=vals.get("매출액")
+                            ar_c=vals.get("매출채권");   ar_p=(prev_vals or {}).get("매출채권")
+                            inv_c=vals.get("재고자산");  inv_p=(prev_vals or {}).get("재고자산")
+                            ap_c=vals.get("매입채무");   ap_p=(prev_vals or {}).get("매입채무")
+                            def _avg(a,b): return (a+b)/2 if a is not None and b is not None else a
+                            avg_inv=_avg(inv_c,inv_p); avg_ar=_avg(ar_c,ar_p); avg_ap=_avg(ap_c,ap_p)
+                            _DIO=round(avg_inv/cogs_v*365,1) if avg_inv is not None and cogs_v not in (None,0) else None
+                            _DSO=round(avg_ar/rev_v*365,1)   if avg_ar  is not None and rev_v  not in (None,0) else None
+                            _DPO=round(avg_ap/cogs_v*365,1)  if avg_ap  is not None and cogs_v not in (None,0) else None
+                            row["DIO"]=_DIO; row["DSO"]=_DSO; row["DPO"]=_DPO
+                            row["CCC"]=round(_DIO+_DSO-_DPO,1) if (_DIO is not None and _DSO is not None and _DPO is not None) else None
                             if p and p>0 and s and s>0:
                                 eps=ni/s if ni else None; bps=te/s if te else None
                                 row["PER"]=round(p/eps, 1) if eps and eps>0 else None; row["PBR"]=round(p/bps, 1) if bps and bps>0 else None; row["시가총액"]=p*s
@@ -1533,6 +1707,8 @@ with tab5:
                 if c in display_df.columns: display_df[c] = display_df[c].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
             for c in ["PER","PBR"]:
                 if c in display_df.columns: display_df[c] = display_df[c].apply(lambda x: f"{x:.1f}배" if pd.notna(x) else "N/A")
+            for c in ["DIO","DSO","DPO","CCC"]:
+                if c in display_df.columns: display_df[c] = display_df[c].apply(lambda x: f"{x:.1f}일" if pd.notna(x) else "N/A")
             st.dataframe(display_df, use_container_width=True, hide_index=True)
             st.markdown("#### 📊 수익성 비교"); names = pdf["종목"].tolist(); colors = ["#0055A4","#E8524A","#4DA8DA","#F4A261","#9C27B0","#2E7D32"]
             fig_comp = make_subplots(rows=1, cols=3, subplot_titles=["영업이익률(%)", "ROE(%)", "PER(배)"])
@@ -1540,13 +1716,46 @@ with tab5:
                 vals = pdf[metric].tolist() if metric in pdf.columns else [None]*len(names)
                 fig_comp.add_trace(go.Bar(x=names, y=[v if pd.notna(v) else 0 for v in vals], marker_color=[colors[j%len(colors)] for j in range(len(names))],
                     showlegend=False, text=[f"{v:.1f}" if pd.notna(v) else "N/A" for v in vals], textposition="outside"), row=1, col=i+1)
-            fig_comp.update_layout(height=400, plot_bgcolor="white", paper_bgcolor="#F2F2F2"); st.plotly_chart(fig_comp, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
+            fig_comp.update_layout(height=400, plot_bgcolor="white", paper_bgcolor="#F2F2F2")
+            st.plotly_chart(fig_comp, use_container_width=True, key="peer_fig_comp", config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
             st.markdown("#### 🎯 종합 레이더"); categories = ["영업이익률","순이익률","ROE","ROA"]; fig_r = go.Figure()
             for idx, (_, row) in enumerate(pdf.iterrows()):
                 vr = [row.get(c, 0) if pd.notna(row.get(c)) and row.get(c, 0) > -50 else 0 for c in categories]; vr.append(vr[0])
                 fig_r.add_trace(go.Scatterpolar(r=vr, theta=categories+[categories[0]], fill="toself", name=row["종목"], line_color=colors[idx%len(colors)], opacity=0.6))
-            fig_r.update_layout(polar=dict(radialaxis=dict(visible=True)), height=450, paper_bgcolor="#F2F2F2"); st.plotly_chart(fig_r, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
+            fig_r.update_layout(polar=dict(radialaxis=dict(visible=True)), height=450, paper_bgcolor="#F2F2F2")
+            st.plotly_chart(fig_r, use_container_width=True, key="peer_fig_radar", config={'scrollZoom': False, 'displayModeBar': False, 'staticPlot': True})
+            # ── CCC 비교 ──────────────────────────────────────────────
+            ccc_cols = ["DIO","DSO","DPO","CCC"]
+            if any(c in pdf.columns for c in ccc_cols):
+                st.markdown("#### 🔄 운전자본 효율성 (CCC) 비교")
+                ccc_df = pdf[["종목"] + [c for c in ccc_cols if c in pdf.columns]].copy()
+                for c in ccc_cols:
+                    if c in ccc_df.columns:
+                        ccc_df[c] = ccc_df[c].apply(lambda x: f"{x:.1f}일" if pd.notna(x) else "N/A")
+                st.dataframe(ccc_df, use_container_width=True, hide_index=True)
+                if "CCC" in pdf.columns:
+                    fig_ccc = go.Figure()
+                    ccc_vals = pdf["CCC"].tolist(); ccc_names = pdf["종목"].tolist()
+                    bar_colors = ["#1a7a4a" if (v is not None and pd.notna(v) and v < 60)
+                                  else "#c05000" if (v is not None and pd.notna(v) and v >= 120)
+                                  else "#b8860b" for v in ccc_vals]
+                    fig_ccc.add_trace(go.Bar(
+                        x=ccc_names,
+                        y=[v if (v is not None and pd.notna(v)) else 0 for v in ccc_vals],
+                        marker_color=bar_colors,
+                        text=[f"{v:.1f}일" if (v is not None and pd.notna(v)) else "N/A" for v in ccc_vals],
+                        textposition="outside"))
+                    fig_ccc.update_layout(
+                        height=350, yaxis_title="CCC (일)",
+                        plot_bgcolor="white", paper_bgcolor="#F2F2F2",
+                        margin=dict(l=10,r=10,t=30,b=10))
+                    fig_ccc.add_hline(y=60,  line_dash="dash", line_color="#b8860b", annotation_text="60일 (주의)")
+                    fig_ccc.add_hline(y=120, line_dash="dash", line_color="#a00000", annotation_text="120일 (위험)")
+                    st.plotly_chart(fig_ccc, use_container_width=True, key="peer_fig_ccc",
+                        config={"scrollZoom":False,"displayModeBar":False,"staticPlot":True})
+                    st.caption("💡 CCC 낮을수록(음수면 최고) 현금흐름 우수 | 🟢 <60일 🟡 60~120일 🔴 >120일")
     else: st.info("👈 재무제표 조회를 먼저 실행해주세요.")
+
 
 with tab6:
     st.markdown("### 📰 공시 / 뉴스")
@@ -1773,4 +1982,4 @@ with tab7:
             "⚠️ <b>면책조항</b>: 본 리포트는 공시 데이터 기반 자동 생성되었으며, 투자 권유가 아닙니다. 투자 결정은 본인의 판단과 책임 하에 이루어져야 합니다.</div>", unsafe_allow_html=True)
     else: st.info("👈 재무제표 조회를 먼저 실행해주세요.")
 
-st.caption("K-IFRS v3.0 | by JR Lee")
+st.caption("K-IFRS v3.5 | by JR Lee")
