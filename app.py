@@ -1,19 +1,59 @@
-import sys, subprocess
-subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--upgrade", "setuptools"], check=False)
-import importlib, site
-importlib.reload(site)
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import OpenDartReader
-import requests, re
+import requests, re, ast
 from datetime import datetime, timedelta
-from pykrx import stock as pykrx_stock
 from bs4 import BeautifulSoup
 import logging
 logger = logging.getLogger(__name__)
 DART_API_KEY = "3ed678c1090649bb93d64ec9e50001dbf01d1f40"
+
+# ─────────────────────────────────────────────────────────────
+# 네이버 금융 OHLCV 조회 (pykrx 대체)
+# ─────────────────────────────────────────────────────────────
+def fetch_naver_ohlcv(ticker, start_dt, end_dt, timeframe="day"):
+    """네이버 금융 OHLCV → DataFrame (컬럼: 시가/고가/저가/종가/거래량, 인덱스: 날짜)"""
+    try:
+        url = (
+            f"https://api.finance.naver.com/siseJson.naver?"
+            f"symbol={ticker}&requestType=1"
+            f"&startTime={start_dt.strftime('%Y%m%d')}"
+            f"&endTime={end_dt.strftime('%Y%m%d')}"
+            f"&timeframe={timeframe}"
+        )
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if resp.status_code != 200:
+            return None
+        text = resp.text.strip().replace("\n", "").replace("\t", "")
+        data = ast.literal_eval(text)
+        if not data or len(data) < 2:
+            return None
+        cols = data[0]
+        rows = data[1:]
+        df = pd.DataFrame(rows, columns=cols)
+        # 컬럼명 표준화
+        rename_map = {}
+        for c in df.columns:
+            if "날짜" in str(c): rename_map[c] = "날짜"
+            elif "시가" in str(c): rename_map[c] = "시가"
+            elif "고가" in str(c): rename_map[c] = "고가"
+            elif "저가" in str(c): rename_map[c] = "저가"
+            elif "종가" in str(c): rename_map[c] = "종가"
+            elif "거래량" in str(c): rename_map[c] = "거래량"
+        df = df.rename(columns=rename_map)
+        if "날짜" not in df.columns:
+            return None
+        df["날짜"] = pd.to_datetime(df["날짜"].astype(str), format="%Y%m%d", errors="coerce")
+        df = df.dropna(subset=["날짜"]).set_index("날짜").sort_index()
+        for c in ["시가", "고가", "저가", "종가", "거래량"]:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+        df = df.dropna(subset=["종가"])
+        return df if len(df) > 0 else None
+    except Exception:
+        return None
 
 st.set_page_config(page_title="K-IFRS 재무제표 분석기", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
@@ -241,12 +281,29 @@ def supplement_prev_from_api(dart, corp_code, year, report_code, accounts):
 
 def fetch_stock_info(ticker):
     price=None; shares=None; trade_date=None; errors=[]
+    # ── 1) 네이버 OHLCV로 종가 조회 ─────────────────────────
     try:
         end=datetime.now(); start=end-timedelta(days=15)
-        ohlcv=pykrx_stock.get_market_ohlcv_by_date(start.strftime("%Y%m%d"),end.strftime("%Y%m%d"),ticker)
+        ohlcv = fetch_naver_ohlcv(ticker, start, end)
         if ohlcv is not None and len(ohlcv)>0:
-            price=int(ohlcv.iloc[-1]["종가"]); trade_date=ohlcv.index[-1].strftime("%Y-%m-%d")
-    except Exception as e: errors.append(f"pykrx: {e}")
+            price=int(ohlcv.iloc[-1]["종가"])
+            trade_date=ohlcv.index[-1].strftime("%Y-%m-%d")
+    except Exception as e:
+        errors.append(f"네이버 OHLCV: {e}")
+    # ── 2) Fallback: 네이버 메인 페이지 현재가 ──────────────
+    if not price:
+        try:
+            url=f"https://finance.naver.com/item/main.naver?code={ticker}"
+            resp=requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=5)
+            if resp.status_code==200:
+                soup=BeautifulSoup(resp.text, "html.parser")
+                tag=soup.select_one("p.no_today span.blind")
+                if tag:
+                    price=int(tag.get_text().replace(",",""))
+                    trade_date=datetime.now().strftime("%Y-%m-%d")
+        except Exception as e:
+            errors.append(f"네이버 메인: {e}")
+    # ── 3) 상장주식수 ──────────────────────────────────────
     try:
         headers={"User-Agent":"Mozilla/5.0"}
         url=f"https://finance.naver.com/item/main.naver?code={ticker}"
@@ -371,7 +428,7 @@ def calc_three_valuations(ticker, eps, bps, ni_curr, ni_prev, price, shares, aut
     results = {}
     try:
         end_dt = datetime.now(); start_dt = end_dt - timedelta(days=365*5)
-        ohlcv = pykrx_stock.get_market_ohlcv_by_date(start_dt.strftime("%Y%m%d"), end_dt.strftime("%Y%m%d"), ticker, "m")
+        ohlcv = fetch_naver_ohlcv(ticker, start_dt, end_dt, timeframe="month")
         if ohlcv is not None and len(ohlcv) > 10 and bps and bps > 0:
             pbr_s = ohlcv["종가"] / bps; pbr_s = pbr_s[pbr_s > 0]
             if len(pbr_s) > 5:
@@ -1203,9 +1260,11 @@ with tab2:
         if st.session_state.get("_ohlcv_cache_key") != cache_key_price:
             with st.spinner("📡 주가 + 시장지수 조회 중..."):
                 try:
-                    ohlcv = pykrx_stock.get_market_ohlcv_by_date(start_dt.strftime("%Y%m%d"), end_dt.strftime("%Y%m%d"), ticker)
+                    ohlcv = fetch_naver_ohlcv(ticker, start_dt, end_dt)
                     st.session_state["_ohlcv_data"] = ohlcv
-                except Exception as e: st.error(f"❌ 주가 조회 실패: {e}"); st.session_state["_ohlcv_data"] = None
+                except Exception as e:
+                    st.error(f"❌ 주가 조회 실패: {e}"); st.session_state["_ohlcv_data"] = None
+                # ── 시장지수 부분은 기존 그대로 유지 ──
                 market_name = ""; market_index = None; mkt_err = ""
                 try:
                     import xml.etree.ElementTree as ET
