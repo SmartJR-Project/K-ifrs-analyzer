@@ -659,7 +659,7 @@ for k in ["dart","corp_list","selected_corp","financial_data","api_connected",
            "price_date","price_errors","multiyear","trend_df"]:
     if k not in st.session_state: st.session_state[k]=None
 if "watchlist" not in st.session_state: st.session_state.watchlist=[]
-if "openai_key" not in st.session_state: st.session_state.openai_key="AIzaSyAgKbE5OO1Cs9gQFKnoOvu9wceKL_VmuvE"
+if "openai_key" not in st.session_state: st.session_state.openai_key=""
 
 def connect_dart(api_key):
     try:
@@ -933,7 +933,7 @@ with st.sidebar:
                     with st.expander("에러"): st.code(err)
     else: st.info("👆 API 키 입력")
     with st.expander("🤖 AI 분석 (선택)"):
-        if "openai_key" not in st.session_state: st.session_state.openai_key = "AIzaSyAgKbE5OO1Cs9gQFKnoOvu9wceKL_VmuvE"
+        if "openai_key" not in st.session_state: st.session_state.openai_key = ""
         if "oai_input" not in st.session_state: st.session_state.oai_input = st.session_state.get("openai_key", "")
         oai_key = st.text_input("Gemini API 키", type="password", placeholder="AIza...", key="oai_input")
         if oai_key: st.session_state.openai_key = oai_key.strip(); st.success("✅ Gemini AI 활성화")
