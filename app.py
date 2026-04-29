@@ -1,11 +1,7 @@
-import sys
-try:
-    import pkg_resources
-except ImportError:
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "setuptools"])
-    import pkg_resources
-from pykrx import stock as pykrx_stock
+import sys, subprocess
+subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--upgrade", "setuptools"], check=False)
+import importlib, site
+importlib.reload(site)
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
